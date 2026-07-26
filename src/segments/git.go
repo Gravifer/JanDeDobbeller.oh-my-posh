@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jandedobbeleer/oh-my-posh/src/cache"
 	"github.com/jandedobbeleer/oh-my-posh/src/log"
 	"github.com/jandedobbeleer/oh-my-posh/src/regex"
 	"github.com/jandedobbeleer/oh-my-posh/src/runtime"
@@ -129,6 +130,8 @@ const (
 
 	trueStr = "true"
 	origin  = "origin"
+
+	mainWorktreeCacheKey = "git_main_worktree"
 )
 
 type Rebase struct {
@@ -155,21 +158,23 @@ type Git struct {
 	Ref            string
 	RawUpstreamURL string
 	Scm
-	stashCount    int
-	Ahead         int
-	PushAhead     int
-	PushBehind    int
-	Behind        int
-	worktreeCount int
-	configOnce    sync.Once
-	IsWorkTree    bool
-	Merge         bool
-	CherryPick    bool
-	Revert        bool
-	poshgit       bool
-	Detached      bool
-	IsBare        bool
-	UpstreamGone  bool
+	mainWorktree     string
+	stashCount       int
+	Ahead            int
+	PushAhead        int
+	PushBehind       int
+	Behind           int
+	worktreeCount    int
+	configOnce       sync.Once
+	mainWorktreeOnce sync.Once
+	IsWorkTree       bool
+	Merge            bool
+	CherryPick       bool
+	Revert           bool
+	poshgit          bool
+	Detached         bool
+	IsBare           bool
+	UpstreamGone     bool
 }
 
 func (g *Git) Template() string {
@@ -1090,6 +1095,54 @@ func (g *Git) WorktreeCount() int {
 	}
 
 	return count
+}
+
+func (g *Git) MainWorktree() string {
+	if !g.IsWorkTree || g.scmDir == "" {
+		return ""
+	}
+
+	g.mainWorktreeOnce.Do(func() {
+		key := fmt.Sprintf("%s@%s", mainWorktreeCacheKey, g.scmDir)
+		if mainWorktree, found := cache.Get[string](cache.Session, key); found {
+			g.mainWorktree = mainWorktree
+			return
+		}
+
+		// NUL-delimited porcelain is stable and survives RunCommand's whitespace trimming.
+		output := g.getGitCommandOutput("worktree", "list", "--porcelain", "-z")
+		mainWorktree, valid := parseMainWorktree(output)
+		if !valid {
+			return
+		}
+
+		g.mainWorktree = mainWorktree
+		cache.Set(cache.Session, key, mainWorktree, cache.INFINITE)
+	})
+
+	return g.mainWorktree
+}
+
+func parseMainWorktree(output string) (string, bool) {
+	// Git guarantees the main worktree is the first record.
+	record, _, found := strings.Cut(output, "\x00\x00")
+	if !found {
+		return "", false
+	}
+
+	fields := strings.Split(record, "\x00")
+	mainWorktree, found := strings.CutPrefix(fields[0], "worktree ")
+	if !found || mainWorktree == "" {
+		return "", false
+	}
+
+	for _, field := range fields[1:] {
+		if field == "bare" {
+			return "", true
+		}
+	}
+
+	return mainWorktree, true
 }
 
 func (g *Git) getRemoteURL() string {
