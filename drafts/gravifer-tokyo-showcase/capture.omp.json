@@ -1,0 +1,56 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "extends": "C:/Users/gravi/.config/oh-my-posh/gravifer-tokyo.omp.json",
+  "blocks": [
+    {
+      "alignment": "left",
+      "index": 1,
+      "segments": [
+        {
+          "style": "plain",
+          "template": "[<#ffffff>\ueb99</> {{ default .UserName .Env.GRAVIFER_CAPTURE_USER }} :: <#ffffff>\uf108</> {{ default .HostName .Env.GRAVIFER_CAPTURE_HOST }}]",
+          "type": "session"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "left",
+      "index": 2,
+      "segments": [
+        {
+          "style": "plain",
+          "template": "",
+          "type": "az"
+        },
+        {
+          "style": "plain",
+          "template": "",
+          "type": "azd"
+        },
+        {
+          "style": "plain",
+          "template": "",
+          "type": "aws"
+        },
+        {
+          "style": "plain",
+          "template": "",
+          "type": "gcp"
+        },
+        {
+          "style": "plain",
+          "template": "",
+          "type": "kubectl"
+        },
+        {
+          "style": "plain",
+          "template": "",
+          "type": "project"
+        }
+      ],
+      "type": "prompt"
+    }
+  ],
+  "version": 3
+}
