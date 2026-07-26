@@ -2,6 +2,10 @@
 
 Gravifer Tokyo — a bracketed Git + Jujutsu PowerShell theme
 
+# Published discussion
+
+https://github.com/JanDeDobbeleer/oh-my-posh/discussions/7723
+
 # Discussion body
 
 <!-- Upload one sanitized real-terminal screenshot here. -->
