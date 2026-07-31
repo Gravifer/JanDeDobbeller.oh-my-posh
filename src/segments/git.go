@@ -1092,8 +1092,8 @@ func (g *Git) MainWorktree() string {
 			return
 		}
 
-		g.mainWorktree = mainWorktree
-		cache.Set(cache.Session, key, mainWorktree, cache.INFINITE)
+		g.mainWorktree = g.convertToLinuxPath(mainWorktree)
+		cache.Set(cache.Session, key, g.mainWorktree, cache.INFINITE)
 	})
 
 	return g.mainWorktree
