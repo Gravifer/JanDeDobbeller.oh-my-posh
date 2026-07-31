@@ -476,6 +476,7 @@ func (g *Git) hasWorktree(gitdir *runtime.FileInfo) bool {
 			gitDir := filepath.Join(g.scmDir, "gitdir")
 			realGitFolder := g.env.FileContent(gitDir)
 			g.repoRootDir = strings.TrimSuffix(strings.TrimRight(realGitFolder, "\n\r "), ".git")
+			g.repoRootDir = g.convertToLinuxPath(g.repoRootDir)
 			// resolve relative paths (worktree.useRelativePaths = true)
 			g.repoRootDir = resolveGitPath(g.scmDir, g.repoRootDir)
 			g.scmDir = g.scmDir[:worktreeIndex]
@@ -500,6 +501,7 @@ func (g *Git) hasWorktree(gitdir *runtime.FileInfo) bool {
 		g.scmDir = g.mainSCMDir[:worktreeIndex]
 		gitDirContent := g.env.FileContent(gitDir)
 		g.repoRootDir = strings.TrimSuffix(strings.TrimRight(gitDirContent, "\n\r "), ".git")
+		g.repoRootDir = g.convertToLinuxPath(g.repoRootDir)
 		// resolve relative paths (worktree.useRelativePaths = true)
 		g.repoRootDir = resolveGitPath(g.mainSCMDir, g.repoRootDir)
 		g.IsWorkTree = true
