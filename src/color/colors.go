@@ -29,19 +29,33 @@ const (
 
 var TrueColor = true
 
-// String is the interface that wraps ToColor method.
-//
-// ToColor gets the ANSI color code for a given color string.
-// This can include a valid hex color in the format `#FFFFFF`,
-// but also a name of one of the first 16 ANSI colors like `lightBlue`.
+// String converts a color string — a hex color like `#FFFFFF`, or one of the
+// first 16 ANSI color names like `lightBlue` — to an ANSI code.
 type String interface {
 	ToAnsi(colorString Ansi, isBackground bool) Ansi
 	Resolve(colorString Ansi) (Ansi, error)
 }
 
+// Set holds one background/foreground color pair. The two unexported source-tracking
+// fields below add +96 B/op (BenchmarkWriteAnchors) / +32 B/op (BenchmarkWritePlainASCII)
+// versus a Set without them, at identical allocation counts, measured against
+// origin/main with terminal.CaptureRuns off: History.Add allocates a Set per push, and
+// every push now carries two extra Ansi (string header) fields regardless of whether
+// anything reads them. This is accepted, not a bug: the fields are unconditional rather
+// than threading CaptureRuns into this package, which would risk the run-capture and
+// ANSI-only paths drifting apart between builds that enable it and builds that don't.
 type Set struct {
 	Background Ansi `json:"background" toml:"background" yaml:"background"`
 	Foreground Ansi `json:"foreground" toml:"foreground" yaml:"foreground"`
+
+	// backgroundSource/foregroundSource carry each channel's resolved SOURCE
+	// form (a #RRGGBB hex, a colour name, accent, transparent, ...) alongside
+	// Background/Foreground's SGR payload. Unexported: they never round-trip
+	// through config (un)marshalling or the gob-encoded device cache, which
+	// only see exported fields, so their presence changes neither. See
+	// History.Add for why they ride on the same entry instead of a second stack.
+	backgroundSource Ansi
+	foregroundSource Ansi
 }
 
 func (c *Set) String() string {
@@ -64,10 +78,22 @@ func (c *History) Len() int {
 	return len(*c)
 }
 
-func (c *History) Add(background, foreground Ansi) {
+// Add pushes background/foreground (SGR) onto the stack, together with
+// backgroundSource/foregroundSource — each channel's source form from before
+// ToAnsi's SGR conversion, which a later encoder needs because SGR cannot be
+// inverted back to it reliably (the 256-colour downgrade and base-16 codes
+// are lossy).
+//
+// The dedupe decision below compares only background/foreground (SGR), same
+// as before this field existed: under color.TrueColor == false, two distinct
+// source forms can collapse to the same SGR pair, so the decision must not
+// be made on source forms, or it would diverge from this one.
+func (c *History) Add(background, foreground, backgroundSource, foregroundSource Ansi) {
 	colors := &Set{
-		Foreground: foreground,
-		Background: background,
+		Foreground:       foreground,
+		Background:       background,
+		foregroundSource: foregroundSource,
+		backgroundSource: backgroundSource,
 	}
 
 	if c.Len() == 0 {
@@ -106,6 +132,25 @@ func (c *History) Foreground() Ansi {
 	}
 
 	return (*c)[c.Len()-1].Foreground
+}
+
+// BackgroundSource returns the top entry's background source form (see Add);
+// emptyColor when the stack is empty, matching Background.
+func (c *History) BackgroundSource() Ansi {
+	if c.Len() == 0 {
+		return emptyColor
+	}
+
+	return (*c)[c.Len()-1].backgroundSource
+}
+
+// ForegroundSource is BackgroundSource's foreground counterpart.
+func (c *History) ForegroundSource() Ansi {
+	if c.Len() == 0 {
+		return emptyColor
+	}
+
+	return (*c)[c.Len()-1].foregroundSource
 }
 
 // Ansi is an ANSI color code ready to be printed to the console.
@@ -239,7 +284,40 @@ type RGB struct {
 	R, G, B uint8
 }
 
-// Defaults is the default AnsiColors implementation.
+// ParseTrueColorRGB parses a 24-bit SGR payload ("38;2;r;g;b" or
+// "48;2;r;g;b") into RGB. It exists for the one color that can't be carried
+// as a hex string: the OS accent color resolves through ToAnsi to this form
+// rather than hex (see Defaults.SetAccentColor building it via gookit's
+// color.RGB), so both a gradient stop resolving "accent" (gradient.go's
+// parseTrueColor, a thin colorful.Color-returning wrapper around this) and
+// the svg package's own Options resolving "accent" (svg/colors.go's
+// ParseTrueColorSGR, an RGB-pointer-returning wrapper) need the same parse.
+// Kept in this package rather than duplicated in each caller so the two
+// never drift out of parity with each other again.
+func ParseTrueColorRGB(c Ansi) (RGB, bool) {
+	parts := strings.Split(c.String(), ";")
+	if len(parts) != 5 || (parts[0] != "38" && parts[0] != "48") || parts[1] != "2" {
+		return RGB{}, false
+	}
+
+	r, err := strconv.ParseUint(parts[2], 10, 8)
+	if err != nil {
+		return RGB{}, false
+	}
+
+	g, err := strconv.ParseUint(parts[3], 10, 8)
+	if err != nil {
+		return RGB{}, false
+	}
+
+	b, err := strconv.ParseUint(parts[4], 10, 8)
+	if err != nil {
+		return RGB{}, false
+	}
+
+	return RGB{R: uint8(r), G: uint8(g), B: uint8(b)}, true
+}
+
 type Defaults struct {
 	accent *Set
 }
@@ -344,8 +422,6 @@ func (d *Defaults) Resolve(colorString Ansi) (Ansi, error) {
 	return colorString, nil
 }
 
-// getAnsiColorFromName returns the color code for a given color name if the name is
-// known ANSI color name.
 func getAnsiColorFromName(colorValue Ansi, isBackground bool) (Ansi, error) {
 	if colorCodes, found := ansiColorCodes[colorValue]; found {
 		return colorCodes[generics.ToInt[int](isBackground)], nil
@@ -398,8 +474,7 @@ func (p *PaletteColors) Resolve(colorString Ansi) (Ansi, error) {
 }
 
 // Cached is the AnsiColors Decorator that does simple color lookup caching.
-// ToColor calls are cheap, but not free, and having a simple cache in
-// has measurable positive effect on performance.
+// ToAnsi calls are cheap but not free, and caching has a measurable positive effect on performance.
 type Cached struct {
 	ansiColors String
 	colorCache map[cachedColorKey]Ansi

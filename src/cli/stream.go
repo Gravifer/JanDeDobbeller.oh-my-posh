@@ -9,18 +9,17 @@ import (
 	"github.com/jandedobbeleer/oh-my-posh/src/shell"
 	"github.com/jandedobbeleer/oh-my-posh/src/template"
 
-	"github.com/spf13/cobra"
+	"github.com/jandedobbeleer/oh-my-posh/src/cmdtree"
 )
 
-// streamCmd represents the stream command
 var streamCmd = createStreamCmd()
 
 func init() {
 	RootCmd.AddCommand(streamCmd)
 }
 
-func createStreamCmd() *cobra.Command {
-	streamCmd := &cobra.Command{
+func createStreamCmd() *cmdtree.Command {
+	streamCmd := &cmdtree.Command{
 		Use:   "stream",
 		Short: "Stream the prompt with incremental updates",
 		Long: `Stream the primary prompt with incremental updates as segments complete.
@@ -30,8 +29,8 @@ Records prefixed with a record separator byte (\x1e) carry the transient prompt,
 which shells cache so no additional CLI call is needed on line acceptance.
 The shell can read records incrementally and update the display.
 Command exits when all segments are resolved.`,
-		Args: cobra.NoArgs,
-		Run: func(_ *cobra.Command, _ []string) {
+		Args: cmdtree.NoArgs,
+		Run: func(_ *cmdtree.Command, _ []string) {
 			if shellName == "" {
 				shellName = shell.GENERIC
 			}

@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jandedobbeleer/oh-my-posh/src/dsc"
+	"github.com/jandedobbeleer/oh-my-posh/src/cli/dsc"
+	"github.com/jandedobbeleer/oh-my-posh/src/cmdtree"
+	basedsc "github.com/jandedobbeleer/oh-my-posh/src/dsc"
 	"github.com/jandedobbeleer/oh-my-posh/src/runtime"
-	"github.com/jandedobbeleer/oh-my-posh/src/shell"
-	"github.com/spf13/cobra"
 )
 
-// shellCmd represents the shell command
-var shellCmd = &cobra.Command{
+var shellCmd = &cmdtree.Command{
 	Use:   "shell get",
 	Short: "Get the shell name",
 	Long: `Get the shell name.
@@ -22,7 +21,7 @@ This command retrieves the name of the current shell being used.`,
 		"get",
 	},
 	Args: NoArgsOrOneValidArg,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(cmd *cmdtree.Command, args []string) {
 		if len(args) == 0 {
 			_ = cmd.Help()
 			return
@@ -45,6 +44,6 @@ This command retrieves the name of the current shell being used.`,
 }
 
 func init() {
-	shellCmd.AddCommand(dsc.Command(shell.DSC()))
+	shellCmd.AddCommand(basedsc.Command(dsc.ShellDSC()))
 	RootCmd.AddCommand(shellCmd)
 }

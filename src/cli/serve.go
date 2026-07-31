@@ -13,24 +13,21 @@ import (
 	"github.com/jandedobbeleer/oh-my-posh/src/shell"
 	"github.com/jandedobbeleer/oh-my-posh/src/template"
 
-	"github.com/spf13/cobra"
+	"github.com/jandedobbeleer/oh-my-posh/src/cmdtree"
 )
 
-// requestPipe is the path to a named pipe (fifo) to read requests from
-// instead of stdin. Unix only - used by shells that cannot hold a child's
-// stdin open across prompts (fish).
+// Unix only - used by shells that cannot hold a child's stdin open across
+// prompts (fish).
 var requestPipe string
 
-// serveCmd represents the serve command
 var serveCmd = createServeCmd()
 
 func init() {
 	RootCmd.AddCommand(serveCmd)
 }
 
-// serveRequest mirrors the request protocol documented in the implementation
-// plan: one JSON object per line on stdin. Unknown fields are ignored by
-// encoding/json by default, which gives us forward compatibility for free.
+// One JSON object per line on stdin. Unknown fields are ignored by
+// encoding/json by default, giving forward compatibility for free.
 type serveRequest struct {
 	Env           map[string]string `json:"env"`
 	Command       string            `json:"command"`
@@ -69,13 +66,13 @@ const (
 // stdout: "<id>\x1f<payload>\x00". \x1f is the ASCII unit separator.
 const serveIDMarker = "\x1f"
 
-func createServeCmd() *cobra.Command {
-	serveCmd := &cobra.Command{
+func createServeCmd() *cmdtree.Command {
+	serveCmd := &cmdtree.Command{
 		Use:    "serve",
 		Short:  "Start a persistent prompt server that streams prompt updates over stdio",
 		Hidden: true,
-		Args:   cobra.NoArgs,
-		Run: func(_ *cobra.Command, _ []string) {
+		Args:   cmdtree.NoArgs,
+		Run: func(_ *cmdtree.Command, _ []string) {
 			if shellName == "" {
 				shellName = shell.GENERIC
 			}
@@ -110,11 +107,10 @@ func createServeCmd() *cobra.Command {
 	return serveCmd
 }
 
-// openServeInput returns the request source: stdin by default, or the given
-// named pipe (fifo) opened read-write. O_RDWR is the load-bearing detail: the
-// daemon itself keeps a writer on the fifo, so a client doing
-// open-write-close per request (the only write primitive fish has) never
-// EOFs the read side. Unix only - the shell owns the fifo's lifecycle.
+// O_RDWR is the load-bearing detail: the daemon itself keeps a writer on the
+// fifo, so a client doing open-write-close per request (the only write
+// primitive fish has) never EOFs the read side. Unix only - the shell owns
+// the fifo's lifecycle.
 //
 // Clients must write each request in a single write(2) call; requests from a
 // single sequential writer (one shell session) never interleave regardless

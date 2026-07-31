@@ -6,8 +6,8 @@ description: "Install, configure, or troubleshoot Oh My Posh/ohmyposh: shell ini
 # Oh My Posh
 
 > Oh My Posh is a cross-shell, cross-platform prompt theme engine. It displays Git status,
-> language versions, cloud context, system metrics, and 180+ other segments in a beautifully
-> themed terminal prompt.
+> language versions, cloud context, system metrics and more in a beautifully themed
+> terminal prompt — 117 segments in all.
 
 ## How to use this skill
 
@@ -30,10 +30,11 @@ description: "Install, configure, or troubleshoot Oh My Posh/ohmyposh: shell ini
 3. **Install a Nerd Font** — required for icons and glyphs:
 
    ```bash
-   oh-my-posh font install
+   oh-my-posh font install meslo
    ```
 
-   Recommended: **Meslo LGM NF**. Set it in the terminal emulator's font settings after installing.
+   `oh-my-posh font list` prints every installable font. Recommended: **Meslo LGM NF**.
+   Set it in the terminal emulator's font settings after installing.
 
 4. **Customize the prompt** → see [configuration](/skills/ohmyposh/configuration.md)
 

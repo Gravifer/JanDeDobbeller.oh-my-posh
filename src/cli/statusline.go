@@ -14,17 +14,17 @@ import (
 	"github.com/jandedobbeleer/oh-my-posh/src/template"
 	"github.com/jandedobbeleer/oh-my-posh/src/terminal"
 
-	"github.com/spf13/cobra"
+	"github.com/jandedobbeleer/oh-my-posh/src/cmdtree"
 )
 
-// statuslineRun returns a cobra Run function for statusline commands.
+// statuslineRun returns a cmdtree Run function for statusline commands.
 // T is the type of the JSON data read from stdin.
 // shellConst identifies the shell (used for cache init and terminal init).
 // cacheKey is the session cache key under which data is stored.
 // sessionID extracts the session ID from parsed data so it can be set as POSH_SESSION_ID.
 // defaultCfg is called when no --config flag is provided or parsing fails.
-func statuslineRun[T any](shellConst, cacheKey string, sessionID func(*T) string, defaultCfg func() *config.Config) func(*cobra.Command, []string) {
-	return func(cmd *cobra.Command, _ []string) {
+func statuslineRun[T any](shellConst, cacheKey string, sessionID func(*T) string, defaultCfg func() *config.Config) func(*cmdtree.Command, []string) {
+	return func(cmd *cmdtree.Command, _ []string) {
 		log.Debugf("%s command started", shellConst)
 
 		stdinData, err := io.ReadAll(os.Stdin)
@@ -79,7 +79,6 @@ func statuslineRun[T any](shellConst, cacheKey string, sessionID func(*T) string
 	}
 }
 
-// processStatuslineData parses stdin JSON into T and stores it in the session cache.
 func processStatuslineData[T any](stdinData []byte, shellConst, cacheKey string, sessionID func(*T) string) {
 	if len(stdinData) == 0 {
 		cache.Init(shellConst, cache.Persist, cache.NoSession)

@@ -1,29 +1,66 @@
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { promises } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-const execAsync = promisify(exec);
+import { VICTOR_MONO } from './font-metrics.mjs';
+
+const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Configuration constants
+// VICTOR_MONO (family name plus CELL_WIDTH/LINE_HEIGHT/FILL_ASCENT/FILL_DESCENT) lives in
+// font-metrics.mjs now, not here - that file has no Node imports, so it can also be imported by
+// the studio's browser-side code (website/src/components/Studio), which cannot import this
+// script (it pulls in node:fs et al.). See font-metrics.mjs for the derivation comments; keep
+// them there, not duplicated here.
+
 const CONFIG = {
   THEMES_CONFIG_DIR: join(__dirname, '../themes'),
-  THEMES_STATIC_DIR: join(__dirname, 'static/img/themes'),
-  OUTPUT_FILE: join(__dirname, 'docs/themes.md'),
+  // Read by plugins/themes at build time (usePluginData('oh-my-posh-themes')) and
+  // inlined into docs/themes.mdx via <ThemeGallery/>. Not under static/: nothing
+  // references these SVGs by URL any more (they're inlined, not <img>-loaded), so
+  // living outside static/ keeps them from also being copied into the deployed
+  // build/ output as dead weight. Regenerated on every build (see the "themes" npm
+  // script) and gitignored, exactly like the PNGs it replaces.
+  MANIFEST_FILE: join(__dirname, 'generated/themes.json'),
+  // The prompt the homepage shows, rendered from oh-my-posh's own built-in default config
+  // (src/config/default.go) rather than any bundled theme, so it is exactly what a reader gets
+  // after running the install command directly above it. Written on its own rather than read out
+  // of the manifest: that file is ~500KB of inlined SVG, and a plain import of it from
+  // src/pages/index.js would put every one of the 124 themes into the landing page's own chunk -
+  // see plugins/themes/index.js on why the gallery pays that cost only on its own page.
+  HERO_FILE: join(__dirname, 'generated/hero.json'),
   CONCURRENCY: 8,
-  DEFAULT_BG_COLOR: '#151515',
   THEME_EXTENSIONS: ['.omp.json', '.omp.toml', '.omp.yaml'],
   SEGMENT_DATA_FILE: join(__dirname, 'segment_data.json'),
-  GITHUB_BASE_URL: 'https://github.com/JanDeDobbeleer/oh-my-posh/blob/main/themes'
+  GITHUB_BASE_URL: 'https://github.com/JanDeDobbeleer/oh-my-posh/blob/main/themes',
+  // "Open in Studio" (ThemeGallery/index.js) fetches a theme's config from here at click time,
+  // rather than this exporter reading the file content into the manifest. That keeps the gallery
+  // reading the actual current file on every click - not a snapshot frozen at whenever the site
+  // was last built - and keeps generated/themes.json from growing by the size of every theme's
+  // source on top of its already-large inlined SVGs.
+  RAW_GITHUB_BASE_URL: 'https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes',
+  // Infima's own light-theme background (no --ifm-background-color override lives in
+  // custom.css, so this is Infima's default) - every SVG this exporter renders for the site's
+  // own light/dark toggle (the hero, and each theme's own light-mode render below) needs an
+  // explicit canvas background for its light half: most bundled themes (and always the hero's
+  // built-in default config) set no terminal background of their own, so without this flag they
+  // fall back to svg's own dark default (svg.go's defaultCanvasBackground) regardless of which
+  // mode the reader's browser is in. A theme that *does* set its own terminal background (e.g.
+  // tokyonight_storm) is unaffected either way - config_export_image.go's --background-color
+  // always loses to a theme's own background, exactly like a real terminal would.
+  LIGHT_BACKGROUND: '#ffffff',
+  FONT_FAMILY: VICTOR_MONO.FONT_FAMILY,
+  CELL_WIDTH: VICTOR_MONO.CELL_WIDTH,
+  LINE_HEIGHT: VICTOR_MONO.LINE_HEIGHT,
+  FILL_ASCENT: VICTOR_MONO.FILL_ASCENT,
+  FILL_DESCENT: VICTOR_MONO.FILL_DESCENT,
 };
 
-/**
- * Sources used to fetch a trending track for segment previews, in fallback order
- */
 const TRENDING_FETCH_TIMEOUT_MS = 4000;
 
 /**
@@ -34,62 +71,38 @@ const TRENDING_FETCH_TIMEOUT_MS = 4000;
 const CONTENT_DENY_LIST = ['fuck', 'shit', 'bitch', 'nigga', 'cunt', 'motherfucker'];
 const CONTENT_DENY_REGEX = new RegExp(`\\b(${CONTENT_DENY_LIST.join('|')})\\b`, 'i');
 
-/**
- * Theme configuration overrides for specific themes
- */
-const THEME_CONFIG_OVERRIDES = new Map([
-  ['amro.omp.json', { author: 'AmRo', bgColor: '#1C2029' }],
-  ['chips.omp.json', {
-    author: 'CodexLink | v1.2.4, Single Width (07/11/2023) | https://github.com/CodexLink/chips.omp.json',
-    bgColor: CONFIG.DEFAULT_BG_COLOR
-  }],
-  ['craver.omp.json', { author: 'Nick Craver', bgColor: '#282c34' }],
-  ['hunk.omp.json', { author: 'Paris Qian', bgColor: CONFIG.DEFAULT_BG_COLOR }],
-  ['kushal.omp.json', { author: 'Kushal-Chandar', bgColor: CONFIG.DEFAULT_BG_COLOR }],
-  ['night-owl.omp.json', { author: 'Mr-Vipi', bgColor: '#011627' }],
-  ['quick-term.omp.json', { author: 'SokLay', bgColor: CONFIG.DEFAULT_BG_COLOR }],
-  ['catppuccin.omp.json', { author: 'IrwinJuice', bgColor: '#24273A' }],
-  ['catppuccin_latte.omp.json', { author: 'IrwinJuice', bgColor: '#EFF1F5' }],
-  ['catppuccin_frappe.omp.json', { author: 'IrwinJuice', bgColor: '#303446' }],
-  ['catppuccin_macchiato.omp.json', { author: 'IrwinJuice', bgColor: '#24273A' }],
-  ['catppuccin_mocha.omp.json', { author: 'IrwinJuice', bgColor: '#1E1E2E' }]
-]);
+// There used to be a THEME_CONFIG_OVERRIDES map here (per-theme author/bgColor
+// overrides). Both only ever fed the PNG path's --author/--background-color
+// flags - image.Settings.Author's caption and image.Renderer's canvas fill -
+// neither of which the svg format reads (see config_export_svg.go: it takes
+// the terminal background from the theme's own config, not a CLI flag). Now
+// that every theme exports as svg, the overrides had no effect left to have.
 
-/**
- * Creates a new theme configuration with default values
- * @param {string} author - Theme author name
- * @param {string} bgColor - Background color for theme image
- * @returns {Object} Theme configuration object
- */
-function createThemeConfig(author = '', bgColor = CONFIG.DEFAULT_BG_COLOR) {
-  return { author, bgColor };
-}
-
-/**
- * Validates if a file is a valid theme file
- * @param {string} fileName - Name of the file to validate
- * @returns {boolean} True if valid theme file
- */
 function isValidTheme(fileName) {
   return CONFIG.THEME_EXTENSIONS.some((ext) => fileName.endsWith(ext));
 }
 
-/**
- * Extracts theme name from filename by removing the extension
- * @param {string} fileName - Theme file name
- * @returns {string} Theme name without extension
- */
 function getThemeNameFromFile(fileName) {
   const lastDotIndex = fileName.lastIndexOf('.');
   const secondLastDotIndex = fileName.lastIndexOf('.', lastDotIndex - 1);
   return fileName.slice(0, secondLastDotIndex);
 }
 
-/**
- * Fetches JSON from a URL, aborting if it takes longer than the configured timeout
- * @param {string} url - URL to fetch
- * @returns {Promise<Object>} Parsed JSON response body
- */
+// The format string the studio's editor/parser (ConfigEditor/serialize.js) and CONFIG_FORMATS
+// (Studio/config.js) key on - derived from the same extension isValidTheme already checked,
+// so a theme file's own on-disk syntax is what "Open in Studio" loads it as.
+function getThemeFormat(fileName) {
+  if (fileName.endsWith('.omp.json')) {
+    return 'json';
+  }
+
+  if (fileName.endsWith('.omp.toml')) {
+    return 'toml';
+  }
+
+  return 'yaml';
+}
+
 async function fetchJsonWithTimeout(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRENDING_FETCH_TIMEOUT_MS);
@@ -108,21 +121,13 @@ async function fetchJsonWithTimeout(url) {
 }
 
 /**
- * Checks whether a track/artist combination is safe to feature in previews.
- * This is a plain-text safety net behind each source's own explicit flag, so it
- * intentionally stays short rather than trying to be a comprehensive filter.
- * @param {string} title - Track title
- * @param {string} artist - Artist name
- * @returns {boolean} True if the track passes the deny-list check
+ * Plain-text safety net behind each source's own explicit flag - intentionally
+ * short rather than a comprehensive filter.
  */
 function isClean(title, artist) {
   return !CONTENT_DENY_REGEX.test(`${title} ${artist}`);
 }
 
-/**
- * Fetches the current #1 non-explicit track from the Deezer top chart
- * @returns {Promise<{artist: string, track: string}>} Trending track
- */
 async function trendingFromDeezer() {
   const body = await fetchJsonWithTimeout('https://api.deezer.com/chart/0/tracks?limit=25');
   const tracks = body?.data;
@@ -140,10 +145,6 @@ async function trendingFromDeezer() {
   return { artist: track.artist.name, track: track.title };
 }
 
-/**
- * Fetches the current #1 non-explicit track from the Apple Music most-played RSS feed
- * @returns {Promise<{artist: string, track: string}>} Trending track
- */
 async function trendingFromAppleRSS() {
   const body = await fetchJsonWithTimeout('https://rss.marketingtools.apple.com/api/v2/us/music/most-played/25/songs.json');
   const tracks = body?.feed?.results;
@@ -165,11 +166,10 @@ async function trendingFromAppleRSS() {
 }
 
 /**
- * Builds the segment data file used for theme preview rendering. Fetches a trending
- * track (Deezer, then Apple Music RSS as a fallback) and injects it into the spotify
- * and ytm segment payloads of a temporary copy of the committed data file. The
- * committed file is never modified; on any failure the committed file is used as-is.
- * @returns {Promise<string>} Path to the data file to pass to --data
+ * Fetches a trending track (Deezer, then Apple Music RSS as a fallback) and injects
+ * it into the spotify and ytm segment payloads of a temporary copy of the committed
+ * data file. The committed file is never modified; on any failure the committed
+ * file is used as-is.
  */
 async function buildDataFileWithTrending() {
   let trending;
@@ -217,53 +217,76 @@ async function buildDataFileWithTrending() {
   }
 }
 
-/**
- * Builds the oh-my-posh command for exporting theme image
- * @param {string} configPath - Path to theme config file
- * @param {string} outputImage - Output image file name
- * @param {Object} config - Theme configuration
- * @returns {string} Complete command string
- */
-function buildPoshCommand(configPath, outputImage, config) {
-  const parts = [
-    'oh-my-posh config export image',
-    `--config=${configPath}`,
-    `--output=${outputImage}`,
-    `--background-color=${config.bgColor}`,
+// OMP_BIN points the export at a specific oh-my-posh binary instead of
+// whatever is on PATH, so a gallery can be regenerated from a local build
+// without installing it over the one the developer actually uses. CI and the
+// normal build leave it unset and get PATH, as before. execFile spawns the
+// binary directly with an argv array (no shell in between), so - unlike the
+// exec()+string command this replaced - the path never needs quoting even
+// when it contains spaces.
+const OMP_BIN = process.env.OMP_BIN || 'oh-my-posh';
+
+// configPath is null for the homepage's own render: oh-my-posh with no --config falls back to
+// the config it builds in Go (src/config/default.go), which is the prompt someone sees before
+// they have configured anything. There is no file to point at, and no bundled theme matches it.
+//
+// backgroundColor is optional (see LIGHT_BACKGROUND) - it is what makes a theme's own light-mode
+// render actually light when the theme sets no terminal background of its own; a theme that does
+// (e.g. tokyonight_storm) keeps its own look regardless, since --background-color always loses
+// to a theme's own background (config_export_image.go).
+function buildPoshArgs(configPath, outputPath, backgroundColor) {
+  return [
+    'config',
+    'export',
+    'image',
+    ...(configPath ? [`--config=${configPath}`] : []),
+    `--output=${outputPath}`,
+    `--font-family=${CONFIG.FONT_FAMILY}`,
+    `--cell-width=${CONFIG.CELL_WIDTH}`,
+    `--line-height=${CONFIG.LINE_HEIGHT}`,
+    `--fill-ascent=${CONFIG.FILL_ASCENT}`,
+    `--fill-descent=${CONFIG.FILL_DESCENT}`,
+    ...(backgroundColor ? [`--background-color=${backgroundColor}`] : []),
+    // segment_data.json is hand-written on purpose (see buildDataFileWithTrending):
+    // its synthetic values are what make the renders look like a plausible
+    // machine. oh-my-posh warns that the file carries no recorder marker, which is
+    // expected here and handled as a non-fatal stderr line below. --data-derive
+    // would not silence it - that flag only forces an already-recorded file to
+    // re-derive, so it is a no-op for a hand-written one.
     `--data=${CONFIG.SEGMENT_DATA_FILE}`,
+    // Without this the build machine leaks into the gallery. A segment the data
+    // file does not cover used to derive itself from whatever machine ran the
+    // export: free-ukraine and markbull published a worktree count read from the
+    // exporting checkout's own .git/worktrees, so the number changed with whoever
+    // built the site. --data-only cuts the environment off, leaving a segment
+    // either rendering from this file or reporting itself absent - never from the
+    // machine. It does not suppress segments the file misses: path and session own
+    // no entry and still render from the env section's pinned PWD and user.
+    '--data-only',
   ];
-
-  if (config.author) {
-    parts.push(`--author="${config.author}"`);
-  }
-
-  return parts.join(' ');
 }
 
-/**
- * Generates markdown content for a theme
- * @param {string} themeName - Name of the theme
- * @param {string} themeFile - Original theme file name
- * @returns {Object} Object containing themeData and link strings
- */
-function generateThemeMarkdown(themeName, themeFile) {
-  const themeData = `
-### [${themeName}]
-
-[![${themeName}](/img/themes/${themeName}.png)][${themeName}]
-`;
-
-  const link = `[${themeName}]: ${CONFIG.GITHUB_BASE_URL}/${themeFile} '${themeName}'\n`;
-
-  return { themeData, link };
+// buildManifestEntry builds the one object plugins/themes hands to
+// <ThemeGallery/> per theme: the raw svg markup (inlined verbatim via
+// dangerouslySetInnerHTML, never parsed as MDX/JSX - MDX compiles a document's body as JSX, and
+// the exporter's raw SVG attributes are not valid JSX, so the markup has to arrive as an opaque
+// string rather than live in the .mdx source itself), the name to label it
+// with, and the GitHub URL both the heading and the render link to. rawConfigUrl and format are
+// what "Open in Studio" (ThemeGallery/index.js) needs to fetch and parse the theme's actual
+// config at click time - see RAW_GITHUB_BASE_URL's own comment for why that's a URL, not the
+// file content itself. svgLight is the theme's own light-mode render (see LIGHT_BACKGROUND) -
+// <ThemeCard/> ships both and picks between them the same way the homepage hero does.
+function buildManifestEntry(themeName, themeFile, svg, svgLight) {
+  return {
+    name: themeName,
+    githubUrl: `${CONFIG.GITHUB_BASE_URL}/${themeFile}`,
+    rawConfigUrl: `${CONFIG.RAW_GITHUB_BASE_URL}/${themeFile}`,
+    format: getThemeFormat(themeFile),
+    svg,
+    svgLight,
+  };
 }
 
-/**
- * Async pool implementation for controlled concurrency
- * @param {number} concurrency - Maximum concurrent operations
- * @param {Iterable} iterable - Items to process
- * @param {Function} iteratorFn - Function to apply to each item
- */
 async function* asyncPool(concurrency, iterable, iteratorFn) {
   const executing = new Set();
 
@@ -289,63 +312,70 @@ async function* asyncPool(concurrency, iterable, iteratorFn) {
   }
 }
 
-/**
- * Exports a single theme to image and generates markdown
- * @param {string} themeFile - Theme file name
- * @returns {Object|null} Theme data, link, and original filename, or null if failed
- */
 async function exportTheme(themeFile) {
   if (!isValidTheme(themeFile)) {
     return null;
   }
 
+  const configPath = join(CONFIG.THEMES_CONFIG_DIR, themeFile);
+  const themeName = getThemeNameFromFile(themeFile);
+  // A per-run scratch path, like buildDataFileWithTrending's temp data file below:
+  // the svg only needs to exist long enough to be read back into the manifest, so
+  // it lives in the OS temp dir rather than under website/, leaving nothing behind
+  // for git status to notice.
+  const svg = await renderSVG(configPath, themeFile);
+  const svgLight = await renderSVG(configPath, `${themeFile} (light)`, CONFIG.LIGHT_BACKGROUND);
+
+  console.info(`Exported ${themeFile}`);
+
+  return { entry: buildManifestEntry(themeName, themeFile, svg, svgLight), fileName: themeFile };
+}
+
+// One render, returning the SVG. label only ever appears in messages, so the caller can name
+// what it asked for - a theme file, or the built-in default config, which has no file at all.
+// backgroundColor is optional (see buildPoshArgs).
+async function renderSVG(configPath, label, backgroundColor) {
+  // A per-run scratch path, like buildDataFileWithTrending's temp data file: the svg only needs
+  // to exist long enough to be read back, so it lives in the OS temp dir rather than under
+  // website/, leaving nothing behind for git status to notice.
+  const outputPath = join(tmpdir(), `omp-theme-${randomUUID()}.svg`);
+
+  let stderr;
+
   try {
-    const configPath = join(CONFIG.THEMES_CONFIG_DIR, themeFile);
-    const config = THEME_CONFIG_OVERRIDES.get(themeFile) || createThemeConfig();
-    const themeName = getThemeNameFromFile(themeFile);
-    const imageFile = `${themeName}.png`;
-    const outputPath = join(CONFIG.THEMES_STATIC_DIR, imageFile);
-
-    const poshCommand = buildPoshCommand(configPath, outputPath, config);
-    const { stderr } = await execAsync(poshCommand);
-
-    if (stderr) {
-      console.error(`Unable to create image for ${themeFile}: ${stderr}`);
-      return null;
-    }
-
-    console.info(`Exported ${themeFile} to ${outputPath}`);
-
-    const { themeData, link } = generateThemeMarkdown(themeName, themeFile);
-
-    return { themeData, link, fileName: themeFile };
-
+    ({ stderr } = await execFileAsync(OMP_BIN, buildPoshArgs(configPath, outputPath, backgroundColor)));
   } catch (error) {
-    console.error(`Error processing theme ${themeFile}:`, error.message);
-    return null;
+    // execFileAsync only rejects on a non-zero exit code - a genuine render failure, not
+    // incidental stderr output. Fail the build loudly instead of silently dropping the render.
+    throw new Error(`Failed to export ${label}: ${error.message}`);
   }
-}
 
-/**
- * Ensures required directories exist
- */
-async function ensureDirectories() {
+  if (stderr) {
+    // A non-zero exit already threw above, so stderr here is incidental (e.g. the
+    // hand-written-data-file warning) and must not fail the build.
+    console.warn(`${label}: ${stderr.trim()}`);
+  }
+
   try {
-    await promises.access(CONFIG.THEMES_STATIC_DIR);
-  } catch {
-    await promises.mkdir(CONFIG.THEMES_STATIC_DIR, { recursive: true });
+    return await promises.readFile(outputPath, 'utf8');
+  } finally {
+    await promises.unlink(outputPath).catch(() => {});
   }
 }
 
-/**
- * Main execution function
- */
+async function ensureDirectories() {
+  // recursive: true is idempotent (no error if the directory already exists), so there is nothing
+  // an access()-then-mkdir() dance would catch that a bare mkdir() doesn't already handle.
+  await promises.mkdir(dirname(CONFIG.MANIFEST_FILE), { recursive: true });
+}
+
 async function main() {
   try {
     console.log('Starting theme export process...');
 
     await ensureDirectories();
 
+    const committedDataFile = CONFIG.SEGMENT_DATA_FILE;
     CONFIG.SEGMENT_DATA_FILE = await buildDataFileWithTrending();
 
     const themes = await promises.readdir(CONFIG.THEMES_CONFIG_DIR);
@@ -362,25 +392,31 @@ async function main() {
       }
     }
 
-    // Sort by filename keys alphabetically
+    // Sort by filename keys alphabetically - the same order the page has shown
+    // since the PNG era, preserved here even though the sort key (the source
+    // config's filename) is no longer part of the emitted manifest entry itself.
     const sortedFileNames = Array.from(resultsMap.keys()).sort();
+    const manifest = sortedFileNames.map((fileName) => resultsMap.get(fileName).entry);
 
-    // Append theme data to the file in sorted order
-    for (const fileName of sortedFileNames) {
-      const result = resultsMap.get(fileName);
-      await promises.appendFile(CONFIG.OUTPUT_FILE, result.themeData);
+    await promises.writeFile(CONFIG.MANIFEST_FILE, JSON.stringify(manifest));
+
+    console.log(`Successfully exported ${manifest.length} themes to ${CONFIG.MANIFEST_FILE}`);
+
+    const heroSVG = await renderSVG(null, 'the default config');
+    const heroSVGLight = await renderSVG(null, 'the default config (light)', CONFIG.LIGHT_BACKGROUND);
+
+    await promises.writeFile(CONFIG.HERO_FILE, JSON.stringify({ svg: heroSVG, svgLight: heroSVGLight }));
+
+    console.log(`Wrote the default config to ${CONFIG.HERO_FILE} for the homepage`);
+
+    // buildDataFileWithTrending only returns a path other than the committed file when it
+    // actually wrote a scratch copy with the trending track baked in (see its own comment); on any
+    // failure - fetch failed, write failed - it falls back to returning the committed file itself.
+    // Only clean up the scratch copy: the committed file must never be deleted, and skipping this
+    // check would do exactly that on every run where trending lookup failed.
+    if (CONFIG.SEGMENT_DATA_FILE !== committedDataFile) {
+      await promises.unlink(CONFIG.SEGMENT_DATA_FILE).catch(() => {});
     }
-
-    // Add separator line
-    await promises.appendFile(CONFIG.OUTPUT_FILE, '\n');
-
-    // Append all links in the same sorted order
-    for (const fileName of sortedFileNames) {
-      const result = resultsMap.get(fileName);
-      await promises.appendFile(CONFIG.OUTPUT_FILE, result.link);
-    }
-
-    console.log(`Successfully exported ${resultsMap.size} themes to ${CONFIG.OUTPUT_FILE}`);
 
   } catch (error) {
     console.error('Export process failed:', error.message);
@@ -395,11 +431,12 @@ if (process.argv[1] === __filename) {
 }
 
 export {
+  CONFIG,
   exportTheme,
-  createThemeConfig,
   isValidTheme,
   getThemeNameFromFile,
-  generateThemeMarkdown,
+  getThemeFormat,
+  buildManifestEntry,
   asyncPool,
   main,
   fetchJsonWithTimeout,

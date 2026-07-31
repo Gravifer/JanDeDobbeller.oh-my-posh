@@ -8,22 +8,17 @@ import (
 	"github.com/jandedobbeleer/oh-my-posh/src/regex"
 	"github.com/jandedobbeleer/oh-my-posh/src/segments/options"
 
-	"gopkg.in/ini.v1"
+	"github.com/jandedobbeleer/oh-my-posh/src/ini"
 )
 
 type Aws struct {
 	Base
 
-	// Settings holds every key/value pair from the active profile in the AWS shared
-	// config and credentials files. Credential-file entries take precedence over
-	// config-file entries for the same key, mirroring the AWS SDK's resolution order.
-	// Templates can read any AWS-recognized setting via {{ .Settings.<key> }}, e.g.
-	// {{ .Settings.role_arn }} or {{ .Settings.sso_role_name }}.
+	// Credential-file entries take precedence over config-file entries for the
+	// same key, mirroring the AWS SDK's resolution order.
 	Settings map[string]string
 
-	// SSOSession holds the resolved [sso-session <name>] section keys when the
-	// active profile references one via the sso_session key. Use as
-	// {{ .SSOSession.sso_start_url }}, etc.
+	// Populated only when the active profile references a session via the sso_session key.
 	SSOSession map[string]string
 
 	Profile     string
@@ -35,7 +30,6 @@ type Aws struct {
 const (
 	defaultStr = "default"
 
-	// AWS shared config keys we promote to convenience fields.
 	awsKeyRegion       = "region"
 	awsKeyAccessKeyID  = "aws_access_key_id"
 	awsKeyAccountID    = "aws_account_id"
@@ -148,7 +142,7 @@ func (a *Aws) parseINI(path string) (*ini.File, bool) {
 		return nil, false
 	}
 
-	cfg, err := ini.LoadSources(ini.LoadOptions{IgnoreInlineComment: true}, []byte(content))
+	cfg, err := ini.LoadVerbatim(content)
 	if err != nil {
 		log.Error(err)
 		return nil, false

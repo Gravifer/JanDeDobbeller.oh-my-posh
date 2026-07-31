@@ -5,23 +5,23 @@ import (
 	"os"
 
 	"github.com/jandedobbeleer/oh-my-posh/src/cache"
+	"github.com/jandedobbeleer/oh-my-posh/src/cli/dsc"
+	"github.com/jandedobbeleer/oh-my-posh/src/cmdtree"
 	"github.com/jandedobbeleer/oh-my-posh/src/config"
-	"github.com/jandedobbeleer/oh-my-posh/src/dsc"
-	"github.com/spf13/cobra"
+	basedsc "github.com/jandedobbeleer/oh-my-posh/src/dsc"
 )
 
-// configCmd represents the config command
-var configCmd = &cobra.Command{
+var configCmd = &cmdtree.Command{
 	Use:   "config edit",
 	Short: "Interact with the config",
 	Long: `Interact with the config.
 
-You can export, migrate or edit the config (via the editor specified in the environment variable "EDITOR").`,
+You can export or edit the config (via the editor specified in the environment variable "EDITOR").`,
 	ValidArgs: []string{
 		"edit",
 	},
 	Args: NoArgsOrOneValidArg,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(cmd *cmdtree.Command, args []string) {
 		if len(args) == 0 {
 			_ = cmd.Help()
 			return
@@ -44,6 +44,6 @@ You can export, migrate or edit the config (via the editor specified in the envi
 }
 
 func init() {
-	configCmd.AddCommand(dsc.Command(config.DSC()))
+	configCmd.AddCommand(basedsc.Command(dsc.ConfigDSC()))
 	RootCmd.AddCommand(configCmd)
 }

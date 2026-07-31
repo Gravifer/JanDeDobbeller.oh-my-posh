@@ -2,7 +2,7 @@
 
 > Oh My Posh is the most customizable and fastest prompt theme engine for any shell.
 > It renders beautifully themed prompts displaying Git status, language versions, cloud context,
-> system metrics, and 180+ other segments on Windows, macOS, and Linux.
+> system metrics and more — 117 segments in all — on Windows, macOS, and Linux.
 
 Website: https://ohmyposh.dev
 Repository: https://github.com/JanDeDobbeleer/oh-my-posh
@@ -18,7 +18,7 @@ JSON/YAML/TOML configuration file works across PowerShell, Bash, Zsh, Fish, Nu (
 Cmd (via Clink), Elvish, and Xonsh — on Windows, macOS, and Linux.
 
 Key features:
-- 180+ prompt segments (Git, language runtimes, cloud, system metrics, and more)
+- 117 prompt segments (Git, language runtimes, cloud, system metrics, and more)
 - Blazing-fast rendering with async support and smart caching
 - Full Unicode, emoji, and Nerd Font icon support
 - Transient and tooltip prompts
@@ -59,10 +59,10 @@ curl -s https://ohmyposh.dev/install.sh | bash -s
 Oh My Posh themes use glyphs and icons from Nerd Fonts. Install a Nerd Font with:
 
 ```bash
-oh-my-posh font install
+oh-my-posh font install meslo
 ```
 
-Recommended font: Meslo LGM NF. Set the font in your terminal emulator after installation.
+List every installable font with `oh-my-posh font list`. Recommended font: Meslo LGM NF. Set the font in your terminal emulator after installation.
 
 ---
 

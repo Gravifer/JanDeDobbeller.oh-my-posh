@@ -1,19 +1,20 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/jandedobbeleer/oh-my-posh/src/runtime"
 
+	"github.com/jandedobbeleer/oh-my-posh/src/cmdtree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// writeDataFile writes a JSON template data file to a temp dir and returns
-// its path.
 func writeDataFile(t *testing.T, content string) string {
 	t.Helper()
 
@@ -23,9 +24,7 @@ func writeDataFile(t *testing.T, content string) string {
 	return path
 }
 
-// withDataPath sets the package-level dataPath var for the duration of the
-// test and restores it afterwards - dataPath is shared with the print/image
-// commands so tests must not leak it across each other.
+// dataPath is shared with the print/image commands so tests must not leak it across each other.
 func withDataPath(t *testing.T, path string) {
 	t.Helper()
 
@@ -35,11 +34,9 @@ func withDataPath(t *testing.T, path string) {
 	t.Cleanup(func() { dataPath = previous })
 }
 
-// noneChanged reports that no CLI flag was explicitly set.
 func noneChanged(string) bool { return false }
 
-// changedSet returns a "Changed" func that reports true only for the given
-// flag names, mimicking cmd.Flags().Changed for an explicitly-set flag.
+// Mimics cmd.Flags().Changed for an explicitly-set flag.
 func changedSet(names ...string) func(string) bool {
 	set := make(map[string]bool, len(names))
 	for _, name := range names {
@@ -184,6 +181,121 @@ func TestApplyDataFile_ExecutedFalseIsRoutedNotTreatedAsAbsent(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, flags.NoExitCode)
+}
+
+// withDataDerive mirrors withDataPath: dataDerive is shared with the print/image
+// commands, so tests must not leak it across each other.
+func withDataDerive(t *testing.T, derive bool) {
+	t.Helper()
+
+	previous := dataDerive
+	dataDerive = derive
+
+	t.Cleanup(func() { dataDerive = previous })
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns what was
+// written to it.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+
+	original := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = original })
+
+	fn()
+
+	require.NoError(t, w.Close())
+
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+
+	return buf.String()
+}
+
+func TestApplyDataFile_UnmarkedFileWarnsRecordedFileDoesNot(t *testing.T) {
+	unmarkedPath := writeDataFile(t, `{"segments": {"az": {"Name": "my-sub"}}}`)
+	recordedPath := writeDataFile(t, `{
+		"version": 1,
+		"segments": {"az": {"enabled": true, "data": {"Name": "my-sub"}}}
+	}`)
+
+	t.Run("unmarked file warns", func(t *testing.T) {
+		withDataPath(t, unmarkedPath)
+
+		stderr := captureStderr(t, func() {
+			require.NoError(t, applyDataFile(&runtime.Flags{}, noneChanged))
+		})
+
+		assert.Contains(t, stderr, unmarkedPath, "the warning must name the file")
+		assert.Contains(t, stderr, "config export data", "the warning must give the recorder command")
+	})
+
+	t.Run("recorded file does not warn", func(t *testing.T) {
+		withDataPath(t, recordedPath)
+
+		stderr := captureStderr(t, func() {
+			require.NoError(t, applyDataFile(&runtime.Flags{}, noneChanged))
+		})
+
+		assert.Empty(t, stderr)
+	})
+}
+
+func TestApplyDataFile_RecordedFileKeepsEnvelopeByDefault(t *testing.T) {
+	path := writeDataFile(t, `{
+		"version": 1,
+		"segments": {"az": {"enabled": true, "data": {"Name": "my-sub"}}}
+	}`)
+	withDataPath(t, path)
+	withDataDerive(t, false)
+
+	flags := &runtime.Flags{}
+	require.NoError(t, applyDataFile(flags, noneChanged))
+
+	require.Contains(t, flags.SegmentData, "az")
+	assert.JSONEq(t, `{"enabled": true, "data": {"Name": "my-sub"}}`, string(flags.SegmentData["az"]),
+		"restoreData needs the envelope intact to take the hermetic no-probe path")
+}
+
+func TestApplyDataFile_DataDeriveUnwrapsRecordedEnvelope(t *testing.T) {
+	path := writeDataFile(t, `{
+		"version": 1,
+		"segments": {"az": {"enabled": true, "data": {"Name": "my-sub"}}}
+	}`)
+	withDataPath(t, path)
+	withDataDerive(t, true)
+
+	flags := &runtime.Flags{}
+	require.NoError(t, applyDataFile(flags, noneChanged))
+
+	require.Contains(t, flags.SegmentData, "az")
+	assert.JSONEq(t, `{"Name": "my-sub"}`, string(flags.SegmentData["az"]),
+		"--data-derive must strip the envelope so restoreData takes the derive-then-overlay path")
+}
+
+func TestApplyDataFile_DataDeriveIsNoopOnAnUnmarkedFile(t *testing.T) {
+	path := writeDataFile(t, `{"segments": {"az": {"Name": "my-sub"}}}`)
+	withDataPath(t, path)
+	withDataDerive(t, true)
+
+	flags := &runtime.Flags{}
+	require.NoError(t, applyDataFile(flags, noneChanged))
+
+	require.Contains(t, flags.SegmentData, "az")
+	assert.JSONEq(t, `{"Name": "my-sub"}`, string(flags.SegmentData["az"]))
+}
+
+func TestPrintAndImageCmd_DataDeriveFlagRegistered(t *testing.T) {
+	for _, cmd := range []*cmdtree.Command{printCmd, imageCmd} {
+		flag := cmd.Flags().Lookup("data-derive")
+		require.NotNil(t, flag, "%s must register --data-derive", cmd.Use)
+		assert.Equal(t, "false", flag.DefValue)
+	}
 }
 
 func TestApplyDataFile_MissingEnvKeysLeaveFlagsUntouched(t *testing.T) {

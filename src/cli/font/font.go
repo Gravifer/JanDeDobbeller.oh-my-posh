@@ -3,13 +3,10 @@
 package font
 
 import (
-	"bytes"
 	"encoding/gob"
 	"fmt"
 	"path"
 	"strings"
-
-	"github.com/ConradIrwin/font/sfnt"
 )
 
 func init() {
@@ -17,13 +14,12 @@ func init() {
 	gob.Register([]*Asset{})
 }
 
-// Font describes a font file and the various metadata associated with it.
 type Font struct {
-	Name     string                 `json:"name,omitempty" jsonschema:"title=Font name,description=The name of the font"`
-	Family   string                 `json:"-"`
-	FileName string                 `json:"-"`
-	Metadata map[sfnt.NameID]string `json:"-"`
-	Data     []byte                 `json:"-"`
+	Name     string            `json:"name,omitempty" jsonschema:"title=Font name,description=The name of the font"`
+	Family   string            `json:"-"`
+	FileName string            `json:"-"`
+	Metadata map[nameID]string `json:"-"`
+	Data     []byte            `json:"-"`
 }
 
 func (f *Font) Apply() error {
@@ -31,8 +27,6 @@ func (f *Font) Apply() error {
 	return err
 }
 
-// downloadAndInstall resolves a font by name or URL, downloads it, and installs it.
-// It returns the resolved font name and any error encountered.
 func downloadAndInstall(font, zipFolder string) (string, error) {
 	asset, err := ResolveFontAsset(font)
 	if err != nil {
@@ -64,16 +58,11 @@ func (f *Font) Resolve() (*Font, bool) {
 	return nil, false
 }
 
-// fontExtensions is a list of file extensions that denote fonts.
-// Only files ending with these extensions will be installed.
 var fontExtensions = map[string]bool{
 	".otf": true,
 	".ttf": true,
 }
 
-// newFont creates a newFont Font struct.
-// fileName is the font's file name, and data is a byte slice containing the font file data.
-// It returns a FontData struct describing the font, or an error.
 func newFont(fileName string, data []byte) (*Font, error) {
 	if _, ok := fontExtensions[strings.ToLower(path.Ext(fileName))]; !ok {
 		return nil, fmt.Errorf("not a font: %v", fileName)
@@ -81,33 +70,33 @@ func newFont(fileName string, data []byte) (*Font, error) {
 
 	font := &Font{
 		FileName: fileName,
-		Metadata: make(map[sfnt.NameID]string),
+		Metadata: make(map[nameID]string),
 		Data:     data,
 	}
 
-	fontData, err := sfnt.Parse(bytes.NewReader(font.Data))
+	table, ok, err := readNameTable(font.Data)
 	if err != nil {
 		return nil, err
 	}
 
-	if !fontData.HasTable(sfnt.TagName) {
+	if !ok {
 		return nil, fmt.Errorf("font %v has no name table", fileName)
 	}
 
-	nameTable, err := fontData.NameTable()
+	entries, err := parseNameTable(table)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, nameEntry := range nameTable.List() {
-		font.Metadata[nameEntry.NameID] = nameEntry.String()
+	for _, entry := range entries {
+		font.Metadata[entry.nameID] = entry.String()
 	}
 
-	font.Name = font.Metadata[sfnt.NameFull]
-	font.Family = font.Metadata[sfnt.NamePreferredFamily]
+	font.Name = font.Metadata[nameFull]
+	font.Family = font.Metadata[namePreferredFamily]
 
 	if font.Family == "" {
-		if v, ok := font.Metadata[sfnt.NameFontFamily]; ok {
+		if v, ok := font.Metadata[nameFontFamily]; ok {
 			font.Family = v
 		}
 	}

@@ -14,11 +14,13 @@ func (e *Engine) Primary() string {
 	return e.primaryInternal(false)
 }
 
-// primaryInternal handles both regular and streaming prompt rendering
 func (e *Engine) primaryInternal(fromCache bool) string {
+	e.startRunCapture()
+
 	needsPrimaryRightPrompt := e.needsPrimaryRightPrompt()
 
 	e.writePrimaryPromptInternal(needsPrimaryRightPrompt, fromCache)
+	e.markCursorAnchor()
 
 	switch e.Env.Shell() {
 	case shell.ZSH:
@@ -52,7 +54,6 @@ func (e *Engine) writePrimaryPrompt(needsPrimaryRPrompt bool) {
 	e.writePrimaryPromptInternal(needsPrimaryRPrompt, false)
 }
 
-// writePrimaryPromptInternal handles both regular and streaming prompt rendering
 func (e *Engine) writePrimaryPromptInternal(needsPrimaryRPrompt, fromCache bool) {
 	if e.Config.ShellIntegration {
 		exitCode, _ := e.Env.StatusCodes()
@@ -147,6 +148,12 @@ func (e *Engine) writePrimaryPromptInternal(needsPrimaryRPrompt, fromCache bool)
 	if e.Config.FinalSpace {
 		e.write(" ")
 		e.currentLineLength++
+		// e.write goes straight into the engine's own builder, so this space never passes
+		// through terminal.Write and the Run stream cannot see it - the same reason right-block
+		// padding needs gapRun. Without this an SVG export drew the cursor flush against the
+		// last segment while a real terminal left a space there, and markCursorAnchor (called
+		// once this function returns) placed the anchor one cell short.
+		e.appendCapturedRuns(gapRun(1), nil)
 	}
 
 	if e.Config.ITermFeatures != nil && e.isIterm() {
@@ -184,4 +191,5 @@ func (e *Engine) writePrimaryRightPrompt() {
 	e.write(strings.Repeat(" ", space))
 	e.write(e.rprompt)
 	e.write(terminal.RestoreCursorPosition())
+	e.appendCapturedRuns(gapRun(space), e.rpromptRuns)
 }

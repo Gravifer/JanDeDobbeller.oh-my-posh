@@ -3,10 +3,9 @@ package segments
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jandedobbeleer/oh-my-posh/src/segments/options"
-	lang "golang.org/x/text/language"
-	"golang.org/x/text/message"
 )
 
 type Executiontime struct {
@@ -16,33 +15,31 @@ type Executiontime struct {
 	Ms          int64
 }
 
-// DurationStyle how to display the time
 type DurationStyle string
 
 const (
-	// ThresholdProperty represents minimum duration (milliseconds) required to enable this segment
+	// Minimum duration in milliseconds required to enable this segment
 	ThresholdProperty options.Option = "threshold"
-	// Austin milliseconds short
+	// Milliseconds short
 	Austin DurationStyle = "austin"
-	// Roundrock milliseconds long
+	// Milliseconds long
 	Roundrock DurationStyle = "roundrock"
-	// Dallas milliseconds full
+	// Milliseconds full
 	Dallas DurationStyle = "dallas"
-	// Galveston hour
+	// Hour
 	Galveston DurationStyle = "galveston"
-	// Galveston hour
+	// Hour
 	GalvestonMs DurationStyle = "galvestonms"
-	// Houston hour and milliseconds
+	// Hour and milliseconds
 	Houston DurationStyle = "houston"
-	// Amarillo seconds
+	// Seconds
 	Amarillo DurationStyle = "amarillo"
-	// Round will round the output of the format
-	Round DurationStyle = "round"
+	Round    DurationStyle = "round"
 	// Always 7 character width
 	Lucky7 = "lucky7"
-	// ISO8601 ISO 8601 duration format (seconds)
+	// ISO 8601 duration format (seconds)
 	ISO8601 DurationStyle = "iso8601"
-	// ISO8601Ms ISO 8601 duration format with milliseconds
+	// ISO 8601 duration format with milliseconds
 	ISO8601Ms DurationStyle = "iso8601ms"
 
 	second           = 1000
@@ -179,6 +176,35 @@ func (t *Executiontime) formatDurationHouston() string {
 	return result
 }
 
+// groupThousands renders n with comma thousand separators, matching what
+// x/text/message's English printer produced for %d.
+func groupThousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+
+	start := 0
+	if s[0] == '-' {
+		start = 1
+	}
+
+	if len(s)-start <= 3 {
+		return s
+	}
+
+	var sb strings.Builder
+	first := start + (len(s)-start)%3
+	if first == start {
+		first = start + 3
+	}
+
+	sb.WriteString(s[:first])
+	for i := first; i < len(s); i += 3 {
+		sb.WriteByte(',')
+		sb.WriteString(s[i : i+3])
+	}
+
+	return sb.String()
+}
+
 func (t *Executiontime) formatDurationAmarillo() string {
 	// wholeNumber represents the value to the left of the decimal point (seconds)
 	wholeNumber := t.Ms / second
@@ -186,8 +212,7 @@ func (t *Executiontime) formatDurationAmarillo() string {
 	decimalNumber := float64(t.Ms%second) / second
 
 	// format wholeNumber as a string with thousands separators
-	printer := message.NewPrinter(lang.English)
-	result := printer.Sprintf("%d", wholeNumber)
+	result := groupThousands(wholeNumber)
 
 	if decimalNumber > 0 {
 		// format decimalNumber as a string with truncated trailing zeros

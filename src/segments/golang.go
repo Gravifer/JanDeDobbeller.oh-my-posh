@@ -1,9 +1,10 @@
 package segments
 
 import (
+	"strings"
+
 	"github.com/jandedobbeleer/oh-my-posh/src/regex"
 	"github.com/jandedobbeleer/oh-my-posh/src/segments/options"
-	"golang.org/x/mod/modfile"
 )
 
 type Golang struct {
@@ -38,10 +39,6 @@ func (g *Golang) Enabled() bool {
 	return g.Language.Enabled()
 }
 
-// getVersion returns the version of the Go language
-// It first checks if the go.mod file is present and if it is, it parses the file to get the version
-// If the go.mod file is not present, it checks if the go.work file is present and if it is, it parses the file to get the version
-// If neither file is present, it returns an empty string
 func (g *Golang) getVersion() (string, error) {
 	if g.options.Bool(ParseModFile, false) {
 		return g.parseModFile()
@@ -61,13 +58,14 @@ func (g *Golang) parseModFile() (string, error) {
 	}
 
 	contents := g.env.FileContent(gomod.Path)
-	file, err := modfile.Parse(gomod.Path, []byte(contents), nil)
-	if err != nil {
-		return "", err
-	}
 
-	if file.Go.Version != "" {
-		return file.Go.Version, nil
+	// the go directive is a top-level "go <version>" line; module paths in
+	// require blocks always contain a slash or dot so they never match
+	for line := range strings.Lines(contents) {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "go" && fields[1][0] >= '0' && fields[1][0] <= '9' {
+			return fields[1], nil
+		}
 	}
 
 	// ignore when no version is found in go.mod file

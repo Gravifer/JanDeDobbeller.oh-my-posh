@@ -11,7 +11,7 @@ import (
 	"github.com/jandedobbeleer/oh-my-posh/src/log"
 	"github.com/jandedobbeleer/oh-my-posh/src/maps"
 	"github.com/jandedobbeleer/oh-my-posh/src/runtime"
-	"github.com/jandedobbeleer/oh-my-posh/src/segments"
+	"github.com/jandedobbeleer/oh-my-posh/src/segments/options"
 	"github.com/jandedobbeleer/oh-my-posh/src/shell"
 	"github.com/jandedobbeleer/oh-my-posh/src/template"
 	"github.com/jandedobbeleer/oh-my-posh/src/terminal"
@@ -20,6 +20,16 @@ import (
 func init() {
 	gob.Register(&Config{})
 }
+
+// Mirrors segments.Source/Pwsh/Cli/FirstMatch: read locally instead of importing
+// segments, which drags its full transitive dep tree (HCL, go-cty, etc.) into
+// every binary that links this package, including the wasm render build.
+const (
+	sourceOption options.Option = "source"
+	pwshSource   string         = "pwsh"
+	cliSource    string         = "cli"
+	firstMatch   string         = "cli|pwsh"
+)
 
 const (
 	JSON string = "json"
@@ -48,7 +58,6 @@ const (
 	Extend  Action = "extend"
 )
 
-// Config holds all the theme for rendering the prompt
 type Config struct {
 	Palette                 color.Palette      `json:"palette,omitempty" toml:"palette,omitempty" yaml:"palette,omitempty"`
 	DebugPrompt             *Segment           `json:"debug_prompt,omitempty" toml:"debug_prompt,omitempty" yaml:"debug_prompt,omitempty"`
@@ -196,16 +205,16 @@ func (cfg *Config) Features(env runtime.Environment) shell.Features {
 
 		for _, segment := range block.Segments {
 			if segment.Type == AZ {
-				source := segment.Options.String(segments.Source, segments.FirstMatch)
-				if strings.Contains(source, segments.Pwsh) {
+				source := segment.Options.String(sourceOption, firstMatch)
+				if strings.Contains(source, pwshSource) {
 					log.Debug("azure enabled")
 					feats |= shell.Azure
 				}
 			}
 
 			if segment.Type == GIT {
-				source := segment.Options.String(segments.Source, segments.Cli)
-				if source == segments.Pwsh {
+				source := segment.Options.String(sourceOption, cliSource)
+				if source == pwshSource {
 					log.Debug("posh-git enabled")
 					feats |= shell.PoshGit
 				}
@@ -253,11 +262,10 @@ func (cfg *Config) Hash() uint64 {
 	return cfg.hash
 }
 
-// fieldPresent reports whether name (a json tag key) was present in the
-// source config file. A nil presentFields map means presence was never
-// recorded (e.g. a struct literal built without read()), in which case every
-// field is treated as present, preserving merge's legacy unconditional-
-// overwrite behavior for such configs.
+// A nil presentFields map means presence was never recorded (e.g. a struct
+// literal built without read()), in which case every field is treated as
+// present, preserving merge's legacy unconditional-overwrite behavior for
+// such configs. name is the json tag key.
 func (cfg *Config) fieldPresent(name string) bool {
 	if cfg.presentFields == nil {
 		return true
@@ -266,8 +274,7 @@ func (cfg *Config) fieldPresent(name string) bool {
 	return cfg.presentFields[name]
 }
 
-// migrateSegmentProperties migrates the deprecated Properties field to Options for all segments.
-// This is needed for TOML configs since go-toml/v2 doesn't support custom unmarshalers.
+// Needed for TOML configs since go-toml/v2 doesn't support custom unmarshalers.
 func (cfg *Config) migrateSegmentProperties() {
 	for _, block := range cfg.Blocks {
 		for _, segment := range block.Segments {
@@ -276,8 +283,6 @@ func (cfg *Config) migrateSegmentProperties() {
 	}
 }
 
-// toggleSegments processes all segments in all blocks and adds segments
-// with Toggled == true to the toggle cache, effectively toggling them off.
 func (cfg *Config) toggleSegments() {
 	currentToggleSet, _ := cache.Get[map[string]bool](cache.Session, cache.TOGGLECACHE)
 	if currentToggleSet == nil {

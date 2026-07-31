@@ -25,14 +25,13 @@ func (e *Engine) writeBlockSegments(block *config.Block) (string, int) {
 	executed := make(map[string]bool, len(block.Segments))
 	results := drainBlockResults(out, len(block.Segments), executed)
 
-	return e.renderBlockSegments(results, block, executed)
+	text, length, _ := e.renderBlockSegments(results, block, executed)
+	return text, length
 }
 
-// launchBlockSegments starts execution for every segment in the block and
-// returns the channel that will receive their results as they complete.
-// Callers may consume the channel immediately or defer consumption to
-// allow other blocks' segments to execute concurrently in the meantime.
-// Returns nil when the block has no segments.
+// Callers may consume the channel immediately or defer consumption to allow
+// other blocks' segments to execute concurrently in the meantime. Returns nil
+// when the block has no segments.
 func (e *Engine) launchBlockSegments(block *config.Block) chan result {
 	length := len(block.Segments)
 
@@ -47,9 +46,8 @@ func (e *Engine) launchBlockSegments(block *config.Block) chan result {
 	return out
 }
 
-// drainBlockResults drains a result channel and records each completed segment
-// in executed. Calling this for every block before any rendering begins ensures
-// the executed map is fully populated, so cross-block .Segments.X dependencies
+// Calling this for every block before any rendering begins ensures the
+// executed map is fully populated, so cross-block .Segments.X dependencies
 // resolve in both directions (an earlier block can reference a later block's
 // segment and vice versa).
 func drainBlockResults(out chan result, count int, executed map[string]bool) []*config.Segment {
@@ -62,11 +60,10 @@ func drainBlockResults(out chan result, count int, executed map[string]bool) []*
 	return results
 }
 
-// renderBlockSegments renders pre-collected segment results in dependency order.
 // Rendering is strictly sequential. For multi-block prompts, executed must be
 // fully populated for all blocks before this is called (via drainBlockResults),
 // so that cross-block .Segments.X dependencies resolve in both directions.
-func (e *Engine) renderBlockSegments(results []*config.Segment, block *config.Block, executed map[string]bool) (string, int) {
+func (e *Engine) renderBlockSegments(results []*config.Segment, block *config.Block, executed map[string]bool) (string, int, []terminal.Run) {
 	if block.RestartCycle {
 		cycle = &e.Config.Cycle
 	}
@@ -83,10 +80,17 @@ func (e *Engine) renderBlockSegments(results []*config.Segment, block *config.Bl
 	e.captureBlockTailColors()
 	e.previousActiveSegment = nil
 
-	return terminal.String()
+	// captureBlockRuns must run before terminal.String(): String's own defer
+	// resets the run stream (runsState.Runs[:0]) before String returns to
+	// this caller, so capturing terminal.Runs() after the call would see it
+	// already truncated.
+	runs := e.captureBlockRuns()
+
+	text, length := terminal.String()
+
+	return text, length, runs
 }
 
-// writeSegmentsConcurrently uses individual goroutines for each segment
 func (e *Engine) writeSegmentsConcurrently(segments []*config.Segment, out chan result) {
 	for i, segment := range segments {
 		// In streaming mode, pre-register all segments as pending
@@ -117,7 +121,6 @@ func (e *Engine) writeSegmentsConcurrently(segments []*config.Segment, out chan 
 	}
 }
 
-// executeSegmentWithTimeout handles segment execution with timeout logic
 func (e *Engine) executeSegmentWithTimeout(segment *config.Segment) {
 	done := make(chan bool)
 	gidChan := make(chan uint64, 1)
@@ -207,7 +210,6 @@ func (e *Engine) writeSegment(block *config.Block, segment *config.Segment) {
 	e.renderActiveSegment()
 }
 
-// canRenderSegment now uses map for O(1) lookups instead of O(n) slice search
 func (e *Engine) canRenderSegment(segment *config.Segment, executed map[string]bool) bool {
 	for _, name := range segment.Needs {
 		if !executed[name] {
